@@ -1,6 +1,7 @@
-# The astorb database in a vertex shader
+# astorb in a vertex shader
+<img width="1299" height="695" alt="astorb" src="https://github.com/user-attachments/assets/d4488597-0e94-4c27-9407-ddccd82b54d6" />
 
-Real-time visualization of the Lowell `astorb.dat` asteroid catalog, inspired by Scott Manley's [Asteroid Discovery From 1980 - 2010](https://www.youtube.com/watch?v=S_d-gs0WoUw) video.
+Real-time visualization of the Lowell Minor Planet Service's Asteroid Orbital Elements Database asteroid catalog, inspired by Scott Manley's [Asteroid Discovery From 1980 - 2010](https://www.youtube.com/watch?v=S_d-gs0WoUw) video.
 ```
 astorb.dat  --(astorb2bin)-->  astorb.bin  --(index.html / WebGL2)-->  points
 ```
@@ -9,7 +10,7 @@ The browser does no per-frame CPU work. Each asteroid is one 16-byte vertex; the
 
 ## Build the data file
 
-Download the astorb database from [Lowell Minor Planet Service](https://asteroid.lowell.edu/astorb/) and extract into this folder, then:
+Download the astorb database from [Lowell](https://asteroid.lowell.edu/astorb/), extract into this folder, and then:
 ```sh
 make
 ./astorb2bin astorb.dat astorb.bin
@@ -36,7 +37,8 @@ Browsers block `fetch()` on `file://`, so serve the folder:
 npx serve -l 8000
 # or
 python3 -m http.server 8000
-# open http://localhost:8000/
+
+# Then open http://localhost:8000/
 ```
 
 Controls:
