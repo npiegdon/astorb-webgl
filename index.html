@@ -1,0 +1,1107 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ccircle cx='8' cy='8' r='6' fill='%2342ff6f'/%3E%3C/svg%3E">
+<title>astorb in a Vertex Shader</title>
+<style>
+  :root {
+    --panel: rgba(9, 13, 22, 0.76);
+    --line: rgba(255, 255, 255, 0.13);
+    --text: #dfe7f2;
+    --muted: #8e9bb0;
+    --green: #42ff6f;
+    --yellow: #ffd12e;
+    --red: #ff4b4b;
+    --gray: #a8b0c2;
+    --blue: #6aa8ff;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #000; }
+  body {
+    color: var(--text);
+    font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    font-size: 13px;
+  }
+  #glcanvas {
+    display: block;
+    width: 100vw;
+    height: 100vh;
+    cursor: grab;
+    touch-action: none;
+  }
+  #glcanvas.dragging { cursor: grabbing; }
+  #ui {
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+  }
+  .panel {
+    position: absolute;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 11px 13px;
+    backdrop-filter: blur(9px);
+    -webkit-backdrop-filter: blur(9px);
+    pointer-events: auto;
+    box-shadow: 0 6px 30px rgba(0, 0, 0, 0.35);
+  }
+  #titlePanel { top: 14px; left: 14px; padding: 12px 15px; }
+  #titlePanel h1 {
+    margin: 0;
+    font-size: 16px;
+    font-weight: 650;
+    letter-spacing: 0.02em;
+  }
+  #subtitle { margin-top: 3px; color: var(--muted); font-size: 12px; }
+  #statsPanel {
+    top: 14px;
+    right: 14px;
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+    font-size: 12px;
+  }
+  #controls { bottom: 14px; left: 14px; width: min(430px, calc(100vw - 28px)); }
+  .row { display: flex; align-items: center; gap: 9px; }
+  .row + .row { margin-top: 9px; }
+  button {
+    appearance: none;
+    border: 1px solid var(--line);
+    background: rgba(255, 255, 255, 0.07);
+    color: var(--text);
+    border-radius: 6px;
+    padding: 5px 10px;
+    font: inherit;
+    cursor: pointer;
+  }
+  button:hover { background: rgba(255, 255, 255, 0.14); }
+  button:active { transform: translateY(1px); }
+  #date {
+    font-variant-numeric: tabular-nums;
+    font-size: 15px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    margin-left: auto;
+  }
+  input[type="range"] {
+    flex: 1;
+    min-width: 40px;
+    accent-color: var(--blue);
+    cursor: pointer;
+  }
+  #speedLabel, #spotSizeLabel, #brightnessLabel {
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+    width: 66px;
+    text-align: right;
+    font-size: 12px;
+  }
+  .legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px 13px;
+    margin-top: 10px;
+    padding-top: 9px;
+    border-top: 1px solid var(--line);
+    color: var(--muted);
+    font-size: 12px;
+  }
+  .legend span { display: inline-flex; align-items: center; gap: 5px; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+  .dot.green { background: var(--green); box-shadow: 0 0 6px var(--green); }
+  .dot.yellow { background: var(--yellow); box-shadow: 0 0 6px var(--yellow); }
+  .dot.red { background: var(--red); box-shadow: 0 0 6px var(--red); }
+  .dot.gray { background: var(--gray); box-shadow: 0 0 6px var(--gray); }
+  .dot.blue { background: var(--blue); box-shadow: 0 0 6px var(--blue); }
+  #note {
+    position: absolute;
+    right: 14px;
+    bottom: 14px;
+    max-width: 360px;
+    color: rgba(180, 192, 210, 0.62);
+    font-size: 11px;
+    line-height: 1.45;
+    text-align: right;
+  }
+  #error {
+    position: fixed;
+    inset: 0;
+    display: none;
+    place-items: center;
+    padding: 30px;
+    background: #05070c;
+    color: #ffb4b4;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 13pt;
+    line-height: 1.4;
+    white-space: pre-wrap;
+    z-index: 10;
+  }
+  @media (max-width: 650px) {
+    #note { display: none; }
+    #controls { width: calc(100vw - 28px); }
+  }
+</style>
+</head>
+<body>
+<canvas id="glcanvas"></canvas>
+
+<div id="ui">
+  <div class="panel" id="titlePanel">
+    <h1>astorb</h1>
+    <div id="subtitle">loading astorb.bin…</div>
+  </div>
+
+  <div class="panel" id="statsPanel">—</div>
+
+  <div class="panel" id="controls">
+    <div class="row">
+      <button id="playButton" type="button">Pause</button>
+      <button id="nowButton" type="button">Now</button>
+      <button id="recenterButton" type="button">Re-center</button>
+      <span id="date">—</span>
+    </div>
+    <div class="row">
+      <span style="color: var(--muted)">Speed</span>
+      <input id="speed" type="range" min="-2" max="3.3" step="0.01" value="1.5">
+      <span id="speedLabel">—</span>
+    </div>
+    <div class="row">
+      <span style="color: var(--muted)">Spot size</span>
+      <input id="spotSize" type="range" min="0.1" max="1.0" step="0.01" value="0.37">
+      <span id="spotSizeLabel">—</span>
+    </div>
+    <div class="row">
+      <span style="color: var(--muted)">Brightness</span>
+      <input id="brightness" type="range" min="-5.32" max="1" step="0.01" value="0">
+      <span id="brightnessLabel">—</span>
+    </div>
+    <div class="legend">
+      <span><i class="dot green"></i>main belt</span>
+      <span><i class="dot yellow"></i>Mars-crossing</span>
+      <span><i class="dot red"></i>Earth-crossing</span>
+      <span><i class="dot gray"></i>other</span>
+      <span><i class="dot blue"></i>planets</span>
+    </div>
+  </div>
+
+  <div id="note">
+    2-body Kepler propagation from the astorb database.
+    Illustrative, not ephemeris-grade: planetary perturbations are not modelled.
+  </div>
+</div>
+
+<div id="error"></div>
+
+<script>
+"use strict";
+
+const canvas = document.getElementById("glcanvas");
+const subtitleEl = document.getElementById("subtitle");
+const statsEl = document.getElementById("statsPanel");
+const dateEl = document.getElementById("date");
+const speedEl = document.getElementById("speed");
+const speedLabelEl = document.getElementById("speedLabel");
+const spotSizeEl = document.getElementById("spotSize");
+const spotSizeLabelEl = document.getElementById("spotSizeLabel");
+const brightnessEl = document.getElementById("brightness");
+const brightnessLabelEl = document.getElementById("brightnessLabel");
+const playButton = document.getElementById("playButton");
+const nowButton = document.getElementById("nowButton");
+const recenterButton = document.getElementById("recenterButton");
+const errorEl = document.getElementById("error");
+
+function fail(message) {
+  errorEl.style.display = "grid";
+  errorEl.textContent = message;
+  console.error(message);
+}
+
+const gl = canvas.getContext("webgl2", {
+  alpha: false,
+  antialias: false,
+  depth: false,
+  powerPreference: "high-performance"
+});
+
+if (!gl) {
+  fail("WebGL2 is not available in this browser.");
+  throw new Error("WebGL2 unavailable");
+}
+
+const TAU = Math.PI * 2;
+const DEG = Math.PI / 180;
+const JD_UNIX_EPOCH = 2440587.5;
+const J2000 = 2451545.0;
+
+// ---------------------------------------------------------------------------
+// Small matrix helpers (column-major, WebGL layout)
+// ---------------------------------------------------------------------------
+
+function perspective(fovy, aspect, near, far) {
+  const f = 1 / Math.tan(fovy / 2);
+  const nf = 1 / (near - far);
+  return new Float32Array([
+    f / aspect, 0, 0, 0,
+    0, f, 0, 0,
+    0, 0, (far + near) * nf, -1,
+    0, 0, 2 * far * near * nf, 0
+  ]);
+}
+
+function lookAt(eye, center, up) {
+  let zx = eye[0] - center[0];
+  let zy = eye[1] - center[1];
+  let zz = eye[2] - center[2];
+  let len = Math.hypot(zx, zy, zz);
+  zx /= len; zy /= len; zz /= len;
+
+  let xx = up[1] * zz - up[2] * zy;
+  let xy = up[2] * zx - up[0] * zz;
+  let xz = up[0] * zy - up[1] * zx;
+  len = Math.hypot(xx, xy, xz);
+  if (len < 1e-6) {
+    xx = 1; xy = 0; xz = 0;
+  } else {
+    xx /= len; xy /= len; xz /= len;
+  }
+
+  const yx = zy * xz - zz * xy;
+  const yy = zz * xx - zx * xz;
+  const yz = zx * xy - zy * xx;
+
+  return new Float32Array([
+    xx, yx, zx, 0,
+    xy, yy, zy, 0,
+    xz, yz, zz, 0,
+    -(xx * eye[0] + xy * eye[1] + xz * eye[2]),
+    -(yx * eye[0] + yy * eye[1] + yz * eye[2]),
+    -(zx * eye[0] + zy * eye[1] + zz * eye[2]),
+    1
+  ]);
+}
+
+function multiply(a, b) {
+  const out = new Float32Array(16);
+  for (let c = 0; c < 4; c++) {
+    for (let r = 0; r < 4; r++) {
+      out[c * 4 + r] =
+        a[0 * 4 + r] * b[c * 4 + 0] +
+        a[1 * 4 + r] * b[c * 4 + 1] +
+        a[2 * 4 + r] * b[c * 4 + 2] +
+        a[3 * 4 + r] * b[c * 4 + 3];
+    }
+  }
+  return out;
+}
+
+// ---------------------------------------------------------------------------
+// Shaders
+// ---------------------------------------------------------------------------
+
+const asteroidVertexShader = `#version 300 es
+precision highp float;
+precision highp int;
+
+layout(location = 0) in float aA;
+layout(location = 1) in float aE;
+layout(location = 2) in float aInc;
+layout(location = 3) in float aNode;
+layout(location = 4) in float aPeri;
+layout(location = 5) in float aM;
+layout(location = 6) in uint aPacked;
+
+uniform mat4 uViewProj;
+uniform float uDays;
+uniform float uDpr;
+uniform vec2 uViewport;
+uniform float uSpotSigma;
+
+out vec3 vColor;
+out float vAlpha;
+out vec2 vCenterPx;
+out float vSigmaPx;
+
+const float PI = 3.141592653589793;
+const float TAU = 6.283185307179586;
+const float GAUSS_K = 0.01720209895;
+
+// Solve Kepler's equation M = E - e sin E. Input M in [-pi, pi].
+// Newton is fast and reliable for e <= 0.8. For nearly parabolic orbits it
+// can diverge, so those rare vertices use a bracketed bisection instead.
+float kepler(float M, float e) {
+  if (e <= 0.8) {
+    float E = M + e * sin(M);
+    for (int i = 0; i < 8; i++) {
+      float d = (E - e * sin(E) - M) / (1.0 - e * cos(E));
+      E -= d;
+      if (abs(d) < 1e-7) break;
+    }
+    return E;
+  }
+
+  // f(E) = E - e sin E - M is increasing, with f(M-e) <= 0 <= f(M+e).
+  float lo = M - e;
+  float hi = M + e;
+  for (int i = 0; i < 32; i++) {
+    float mid = 0.5 * (lo + hi);
+    float fm = mid - e * sin(mid) - M;
+    if (fm < 0.0) lo = mid; else hi = mid;
+  }
+  return 0.5 * (lo + hi);
+}
+
+void main() {
+  float e = aE;
+  float inc = aInc * TAU;
+  float node = aNode * TAU;
+  float peri = aPeri * TAU;
+  float M0 = aM * TAU;
+
+  float n = GAUSS_K / (aA * sqrt(aA));
+  float M = M0 + n * uDays;
+  M = mod(M + PI, TAU) - PI;
+
+  float E = kepler(M, e);
+  float xp = aA * (cos(E) - e);
+  float yp = aA * sqrt(max(0.0, 1.0 - e * e)) * sin(E);
+
+  float cw = cos(peri), sw = sin(peri);
+  float cn = cos(node), sn = sin(node);
+  float ci = cos(inc), si = sin(inc);
+
+  vec3 p;
+  p.x = (cn * cw - sn * sw * ci) * xp + (-cn * sw - sn * cw * ci) * yp;
+  p.y = (sn * cw + cn * sw * ci) * xp + (-sn * sw + cn * cw * ci) * yp;
+  p.z = (sw * si) * xp + (cw * si) * yp;
+
+  vec4 clip = uViewProj * vec4(p, 1.0);
+  gl_Position = clip;
+
+  // Exact projected centre in device pixels. The point-sprite bounds may snap
+  // to the pixel grid, but the Gaussian centre below does not.
+  vCenterPx = (clip.xy / max(clip.w, 1e-6) * 0.5 + 0.5) * uViewport;
+
+  float H = float(aPacked & 0x3FFFu) * 0.01 - 2.0;
+  int cls = int(aPacked >> 14);
+
+  vec3 col;
+  float alpha;
+  if (cls == 3) {
+    col = vec3(1.0, 0.20, 0.20);
+    alpha = 0.95;
+  } else if (cls == 2) {
+    col = vec3(1.0, 0.82, 0.16);
+    alpha = 0.90;
+  } else if (cls == 1) {
+    col = vec3(0.25, 1.0, 0.42);
+    alpha = 0.36;
+  } else {
+    col = vec3(0.62, 0.66, 0.78);
+    alpha = 0.68;
+  }
+  vColor = col;
+  vAlpha = alpha;
+
+  // Faint objects get the base spot sigma; the brightest get a larger one.
+  float brightness = clamp((20.0 - H) / 20.0, 0.0, 1.0);
+  float sigmaCss = uSpotSigma * (1.0 + 0.8 * brightness);
+  vSigmaPx = sigmaCss * uDpr;
+
+  // The square sprite must contain the Gaussian (2.5 sigma radius).
+  gl_PointSize = min(2.0 * 2.5 * vSigmaPx + 2.0, 64.0);
+}
+`;
+
+const asteroidFragmentShader = `#version 300 es
+precision highp float;
+
+uniform float uExposure;
+
+in vec3 vColor;
+in float vAlpha;
+in vec2 vCenterPx;
+in float vSigmaPx;
+out vec4 outColor;
+
+void main() {
+  vec2 d = gl_FragCoord.xy - vCenterPx;
+  float sigma2 = vSigmaPx * vSigmaPx;
+  float g = exp(-0.5 * dot(d, d) / sigma2);
+
+  // Hold total light constant as the spot size changes: the 2D Gaussian
+  // integral is 2*pi*sigma^2. uExposure is a global taste knob.
+  float peak = vAlpha * uExposure / (6.283185307179586 * sigma2);
+  outColor = vec4(vColor, clamp(peak * g, 0.0, 1.0));
+}
+`;
+
+const planetVertexShader = `#version 300 es
+precision highp float;
+
+layout(location = 0) in vec3 aPos;
+layout(location = 1) in float aSize;
+layout(location = 2) in vec3 aColor;
+
+uniform mat4 uViewProj;
+uniform float uDpr;
+
+out vec3 vColor;
+
+void main() {
+  gl_Position = uViewProj * vec4(aPos, 1.0);
+  gl_PointSize = aSize * uDpr;
+  vColor = aColor;
+}
+`;
+
+const planetFragmentShader = `#version 300 es
+precision highp float;
+
+in vec3 vColor;
+out vec4 outColor;
+
+void main() {
+  float d = length(gl_PointCoord - vec2(0.5)) * 2.0;
+  if (d > 1.0) discard;
+  float core = smoothstep(1.0, 0.72, d);
+  float halo = smoothstep(1.0, 0.0, d);
+  // Keep the core the actual planet colour; only brighten the soft halo.
+  vec3 c = mix(vColor * 1.6, vColor, core);
+  float alpha = max(core, halo * 0.30);
+  outColor = vec4(c, alpha);
+}
+`;
+
+function compileShader(type, source) {
+  const shader = gl.createShader(type);
+  gl.shaderSource(shader, source);
+  gl.compileShader(shader);
+  if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+    const log = gl.getShaderInfoLog(shader);
+    gl.deleteShader(shader);
+    throw new Error("Shader compile failed:\n" + log);
+  }
+  return shader;
+}
+
+function createProgram(vertexSource, fragmentSource) {
+  const vs = compileShader(gl.VERTEX_SHADER, vertexSource);
+  const fs = compileShader(gl.FRAGMENT_SHADER, fragmentSource);
+  const program = gl.createProgram();
+  gl.attachShader(program, vs);
+  gl.attachShader(program, fs);
+  gl.linkProgram(program);
+  gl.deleteShader(vs);
+  gl.deleteShader(fs);
+  if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+    const log = gl.getProgramInfoLog(program);
+    gl.deleteProgram(program);
+    throw new Error("Program link failed:\n" + log);
+  }
+  return program;
+}
+
+let asteroidProgram;
+let planetProgram;
+try {
+  asteroidProgram = createProgram(asteroidVertexShader, asteroidFragmentShader);
+  planetProgram = createProgram(planetVertexShader, planetFragmentShader);
+} catch (err) {
+  fail(String(err.message || err));
+  throw err;
+}
+
+const asteroidUniforms = {
+  viewProj: gl.getUniformLocation(asteroidProgram, "uViewProj"),
+  days: gl.getUniformLocation(asteroidProgram, "uDays"),
+  dpr: gl.getUniformLocation(asteroidProgram, "uDpr"),
+  viewport: gl.getUniformLocation(asteroidProgram, "uViewport"),
+  spotSigma: gl.getUniformLocation(asteroidProgram, "uSpotSigma"),
+  exposure: gl.getUniformLocation(asteroidProgram, "uExposure")
+};
+const planetUniforms = {
+  viewProj: gl.getUniformLocation(planetProgram, "uViewProj"),
+  dpr: gl.getUniformLocation(planetProgram, "uDpr")
+};
+
+// ---------------------------------------------------------------------------
+// Planets: JPL/Standish approximate Keplerian elements, valid 1800–2050.
+// Elements are at J2000 with rates per Julian century. Positions are in the
+// J2000 mean ecliptic, matching the astorb orbital elements.
+// ---------------------------------------------------------------------------
+
+const PLANETS = [
+  {
+    name: "Mercury",
+    a: 0.38709927, e: 0.20563593, I: 7.00497902,
+    L: 252.25032350, wbar: 77.45779628, node: 48.33076593,
+    da: 0.00000037, de: 0.00001906, dI: -0.00594749,
+    dL: 149472.67411175, dwbar: 0.16047689, dnode: -0.12534081,
+    radius: 2439.7
+  },
+  {
+    name: "Venus",
+    a: 0.72333566, e: 0.00677672, I: 3.39467605,
+    L: 181.97909950, wbar: 131.60246718, node: 76.67984255,
+    da: 0.00000390, de: -0.00004107, dI: -0.00078890,
+    dL: 58517.81538729, dwbar: 0.00268329, dnode: -0.27769418,
+    radius: 6051.8
+  },
+  {
+    name: "Earth",
+    a: 1.00000261, e: 0.01671123, I: -0.00001531,
+    L: 100.46457166, wbar: 102.93768193, node: 0.0,
+    da: 0.00000562, de: -0.00004392, dI: -0.01294668,
+    dL: 35999.37244981, dwbar: 0.32327364, dnode: 0.0,
+    radius: 6371.0
+  },
+  {
+    name: "Mars",
+    a: 1.52371034, e: 0.09339410, I: 1.84969142,
+    L: -4.55343205, wbar: -23.94362959, node: 49.55953891,
+    da: 0.00001847, de: 0.00007882, dI: -0.00813131,
+    dL: 19140.30268499, dwbar: 0.44441088, dnode: -0.29257343,
+    radius: 3389.5
+  },
+  {
+    name: "Jupiter",
+    a: 5.20288700, e: 0.04838624, I: 1.30439695,
+    L: 34.39644051, wbar: 14.72847983, node: 100.47390909,
+    da: -0.00011607, de: -0.00013253, dI: -0.00183714,
+    dL: 3034.74612775, dwbar: 0.21252668, dnode: 0.20469106,
+    radius: 69911
+  },
+  {
+    name: "Saturn",
+    a: 9.53667594, e: 0.05386179, I: 2.48599187,
+    L: 49.95424423, wbar: 92.59887831, node: 113.66242448,
+    da: -0.00125060, de: -0.00050991, dI: 0.00193609,
+    dL: 1222.49362201, dwbar: -0.41897216, dnode: -0.28867794,
+    radius: 58232
+  },
+  {
+    name: "Uranus",
+    a: 19.18916464, e: 0.04725744, I: 0.77263783,
+    L: 313.23810451, wbar: 170.95427630, node: 74.01692503,
+    da: -0.00196176, de: -0.00004397, dI: -0.00242939,
+    dL: 428.48202785, dwbar: 0.40805281, dnode: 0.04240589,
+    radius: 25362
+  },
+  {
+    name: "Neptune",
+    a: 30.06992276, e: 0.00859048, I: 1.77004347,
+    L: -55.12002969, wbar: 44.96476227, node: 131.78422574,
+    da: 0.00026291, de: 0.00005105, dI: 0.00035372,
+    dL: 218.45945325, dwbar: -0.32241464, dnode: -0.00508664,
+    radius: 24622
+  }
+];
+
+function solveKeplerJS(M, e) {
+  let E = e > 0.8
+    ? M + e * Math.sin(M) / (1 - Math.sin(M + e) + Math.sin(M))
+    : M + e * Math.sin(M);
+  for (let i = 0; i < 12; i++) {
+    const d = (E - e * Math.sin(E) - M) / (1 - e * Math.cos(E));
+    E -= d;
+    if (Math.abs(d) < 1e-12) break;
+  }
+  return E;
+}
+
+function planetPosition(p, jd) {
+  const T = (jd - J2000) / 36525.0;
+  const a = p.a + p.da * T;
+  const e = p.e + p.de * T;
+  const inc = (p.I + p.dI * T) * DEG;
+  const L = (p.L + p.dL * T) * DEG;
+  const wbar = (p.wbar + p.dwbar * T) * DEG;
+  const node = (p.node + p.dnode * T) * DEG;
+
+  const peri = wbar - node;
+  let M = L - wbar;
+  M = ((M + Math.PI) % TAU + TAU) % TAU - Math.PI;
+
+  const E = solveKeplerJS(M, e);
+  const xp = a * (Math.cos(E) - e);
+  const yp = a * Math.sqrt(Math.max(0, 1 - e * e)) * Math.sin(E);
+
+  const cw = Math.cos(peri), sw = Math.sin(peri);
+  const cn = Math.cos(node), sn = Math.sin(node);
+  const ci = Math.cos(inc), si = Math.sin(inc);
+
+  return [
+    (cn * cw - sn * sw * ci) * xp + (-cn * sw - sn * cw * ci) * yp,
+    (sn * cw + cn * sw * ci) * xp + (-sn * sw + cn * cw * ci) * yp,
+    (sw * si) * xp + (cw * si) * yp
+  ];
+}
+
+function planetSizePx(radiusKm) {
+  // Not physical: actual radii would be invisible. Preserve the ordering and
+  // roughly the relative sizes while keeping everything legible on screen.
+  return Math.max(3.0, Math.min(24.0, 2.5 + 0.8 * (radiusKm / 2439.7)));
+}
+
+// ---------------------------------------------------------------------------
+// State
+// ---------------------------------------------------------------------------
+
+const BASE_EXPOSURE = 2.0;
+
+const state = {
+  playing: true,
+  speed: 10 ** 1.2,           // days per second
+  jd: Date.now() / 86400000 + JD_UNIX_EPOCH,
+  spotSigma: 0.30,            // CSS px, Gaussian sigma of an asteroid spot
+  brightness: 0.5,            // multiplier on top of BASE_EXPOSURE
+  exposure: BASE_EXPOSURE,
+  showAsteroids: true,
+  showPlanets: true
+};
+
+const CAMERA_FOV = 45 * DEG;
+
+const cam = {
+  yaw: 0.0,
+  pitch: 0.7,
+  distance: 10.0,
+  target: [0, 0, 0]
+};
+
+function clamp(x, lo, hi) { return Math.min(hi, Math.max(lo, x)); }
+
+function nowJD() {
+  return Date.now() / 86400000 + JD_UNIX_EPOCH;
+}
+
+function jdToDateString(jd) {
+  return new Date((jd - JD_UNIX_EPOCH) * 86400000)
+    .toISOString()
+    .slice(0, 10);
+}
+
+// ---------------------------------------------------------------------------
+// Load the binary
+// ---------------------------------------------------------------------------
+
+let asteroidCount = 0;
+let epochJD = 0;
+let asteroidVao = null;
+let dpr = 1;
+
+async function loadAsteroids() {
+  subtitleEl.textContent = "loading astorb.bin…";
+
+  let response;
+  try {
+    response = await fetch("astorb.bin");
+  } catch (err) {
+    throw new Error(
+      "Could not fetch astorb.bin.\n\n" +
+      "Serve this folder over HTTP:\n" +
+      "    $ npx serve -l 8000\n" +
+      "    $ python3 -m http.server 8000\n" +
+      "    etc.\n\n" +
+      "Then open http://localhost:8000/\n\n" +
+      "Browsers do not allow fetch() from file:// URLs."
+    );
+  }
+
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status} while loading astorb.bin`);
+  }
+
+  const buffer = await response.arrayBuffer();
+  if (buffer.byteLength < 64) {
+    throw new Error("astorb.bin is too short to be an astorb artifact.");
+  }
+
+  const dv = new DataView(buffer);
+  const magic = String.fromCharCode(
+    dv.getUint8(0), dv.getUint8(1), dv.getUint8(2), dv.getUint8(3),
+    dv.getUint8(4), dv.getUint8(5), dv.getUint8(6)
+  );
+  if (magic !== "ASTORB2") {
+    throw new Error(`Unexpected magic "${magic}" in astorb.bin.`);
+  }
+
+  const version = dv.getUint32(8, true);
+  if (version !== 1) {
+    throw new Error(`Unsupported astorb.bin version ${version}.`);
+  }
+
+  asteroidCount = dv.getUint32(12, true);
+  const stride = dv.getUint32(16, true);
+  epochJD = dv.getFloat64(24, true);
+
+  if (stride !== 16) {
+    throw new Error(`Unexpected record stride ${stride}.`);
+  }
+  if (buffer.byteLength < 64 + asteroidCount * stride) {
+    throw new Error("astorb.bin is truncated.");
+  }
+
+  const records = new Uint8Array(buffer, 64, asteroidCount * stride);
+
+  const vao = gl.createVertexArray();
+  gl.bindVertexArray(vao);
+  const vbo = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
+  gl.bufferData(gl.ARRAY_BUFFER, records, gl.STATIC_DRAW);
+
+  gl.enableVertexAttribArray(0);
+  gl.vertexAttribPointer(0, 1, gl.FLOAT, false, stride, 0);
+
+  for (let i = 0; i < 5; i++) {
+    gl.enableVertexAttribArray(1 + i);
+    gl.vertexAttribPointer(1 + i, 1, gl.UNSIGNED_SHORT, true,
+                           stride, 4 + i * 2);
+  }
+
+  gl.enableVertexAttribArray(6);
+  gl.vertexAttribIPointer(6, 1, gl.UNSIGNED_SHORT, stride, 14);
+
+  gl.bindVertexArray(null);
+  gl.bindBuffer(gl.ARRAY_BUFFER, null);
+  asteroidVao = vao;
+
+  subtitleEl.textContent =
+    `${asteroidCount.toLocaleString()} asteroids · epoch ` +
+    `${jdToDateString(epochJD)}`;
+  statsEl.textContent = `${asteroidCount.toLocaleString()} points`;
+
+  console.log(
+    `Loaded astorb.bin: ${asteroidCount.toLocaleString()} objects, ` +
+    `epoch JD ${epochJD}, ${(buffer.byteLength / 1048576).toFixed(1)} MiB`
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Planet geometry buffer
+// ---------------------------------------------------------------------------
+
+const planetVao = gl.createVertexArray();
+gl.bindVertexArray(planetVao);
+const planetVbo = gl.createBuffer();
+gl.bindBuffer(gl.ARRAY_BUFFER, planetVbo);
+gl.bufferData(gl.ARRAY_BUFFER, 9 * 7 * 4, gl.DYNAMIC_DRAW);
+gl.enableVertexAttribArray(0);
+gl.vertexAttribPointer(0, 3, gl.FLOAT, false, 28, 0);
+gl.enableVertexAttribArray(1);
+gl.vertexAttribPointer(1, 1, gl.FLOAT, false, 28, 12);
+gl.enableVertexAttribArray(2);
+gl.vertexAttribPointer(2, 3, gl.FLOAT, false, 28, 16);
+gl.bindVertexArray(null);
+
+const bodyData = new Float32Array(9 * 7);
+
+function updateBodies(jd) {
+  // Sun first.
+  bodyData.set([0, 0, 0, 9.0, 1.0, 0.86, 0.35], 0);
+
+  let offset = 7;
+  for (const planet of PLANETS) {
+    const pos = planetPosition(planet, jd);
+    const size = planetSizePx(planet.radius);
+    bodyData[offset + 0] = pos[0];
+    bodyData[offset + 1] = pos[1];
+    bodyData[offset + 2] = pos[2];
+    bodyData[offset + 3] = size;
+    bodyData[offset + 4] = 0.42;
+    bodyData[offset + 5] = 0.68;
+    bodyData[offset + 6] = 1.0;
+    offset += 7;
+  }
+
+  gl.bindBuffer(gl.ARRAY_BUFFER, planetVbo);
+  gl.bufferData(gl.ARRAY_BUFFER, bodyData, gl.DYNAMIC_DRAW);
+  gl.bindBuffer(gl.ARRAY_BUFFER, null);
+}
+
+// ---------------------------------------------------------------------------
+// Resize
+// ---------------------------------------------------------------------------
+
+function resize() {
+  dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const width = Math.max(1, Math.floor(window.innerWidth * dpr));
+  const height = Math.max(1, Math.floor(window.innerHeight * dpr));
+  if (canvas.width !== width || canvas.height !== height) {
+    canvas.width = width;
+    canvas.height = height;
+  }
+  gl.viewport(0, 0, width, height);
+}
+
+window.addEventListener("resize", resize);
+resize();
+
+// ---------------------------------------------------------------------------
+// Camera input
+// ---------------------------------------------------------------------------
+
+let dragging = false;
+let dragMode = null;   // "rotate" for left drag, "pan" for right drag
+let lastX = 0;
+let lastY = 0;
+
+// Slide the camera target in the ecliptic plane (z = 0). This is a "grab the
+// scene" pan: content follows the mouse, like OrbitControls.
+function panCamera(dx, dy) {
+  const viewportHeight = Math.max(1, canvas.clientHeight);
+  const worldPerPixel =
+    2.0 * cam.distance * Math.tan(CAMERA_FOV / 2) / viewportHeight;
+
+  const sy = Math.sin(cam.yaw);
+  const cy = Math.cos(cam.yaw);
+  const sp = Math.sin(cam.pitch);
+
+  const rightX = -sy;
+  const rightY = cy;
+  const upX = -cy * sp;
+  const upY = -sy * sp;
+
+  cam.target[0] += (-rightX * dx + upX * dy) * worldPerPixel;
+  cam.target[1] += (-rightY * dx + upY * dy) * worldPerPixel;
+  cam.target[0] = clamp(cam.target[0], -5000, 5000);
+  cam.target[1] = clamp(cam.target[1], -5000, 5000);
+}
+
+function recenterCamera() {
+  cam.target[0] = 0;
+  cam.target[1] = 0;
+  cam.target[2] = 0;
+}
+
+canvas.addEventListener("pointerdown", (event) => {
+  if (event.pointerType === "mouse" && event.button === 2) {
+    dragMode = "pan";
+  } else if (event.button === 0) {
+    dragMode = "rotate";
+  } else {
+    return;
+  }
+
+  dragging = true;
+  lastX = event.clientX;
+  lastY = event.clientY;
+  canvas.classList.add("dragging");
+  try {
+    canvas.setPointerCapture(event.pointerId);
+  } catch (err) {
+    // Synthetic pointer events (e.g. from tests) may not be capturable.
+  }
+});
+
+canvas.addEventListener("pointermove", (event) => {
+  if (!dragging) return;
+  const dx = event.clientX - lastX;
+  const dy = event.clientY - lastY;
+
+  if (dragMode === "pan") {
+    panCamera(dx, dy);
+  } else {
+    cam.yaw -= dx * 0.005;
+    cam.pitch = clamp(cam.pitch + dy * 0.005, -1.5, 1.5);
+  }
+
+  lastX = event.clientX;
+  lastY = event.clientY;
+});
+
+function endDrag(event) {
+  if (!dragging) return;
+  dragging = false;
+  dragMode = null;
+  canvas.classList.remove("dragging");
+  if (canvas.hasPointerCapture(event.pointerId)) {
+    canvas.releasePointerCapture(event.pointerId);
+  }
+}
+canvas.addEventListener("pointerup", endDrag);
+canvas.addEventListener("pointercancel", endDrag);
+
+canvas.addEventListener("wheel", (event) => {
+  event.preventDefault();
+  cam.distance = clamp(cam.distance * Math.exp(event.deltaY * 0.0012),
+                       0.05, 5000.0);
+}, { passive: false });
+
+canvas.addEventListener("dblclick", () => {
+  cam.yaw = 0.0;
+  cam.pitch = 0.7;
+  cam.distance = 10.0;
+  recenterCamera();
+});
+
+canvas.addEventListener("contextmenu", (event) => event.preventDefault());
+
+// ---------------------------------------------------------------------------
+// Time controls
+// ---------------------------------------------------------------------------
+
+function updateSpeedLabel() {
+  speedLabelEl.textContent =
+    `${state.speed < 10 ? state.speed.toFixed(2) : state.speed.toFixed(0)} d/s`;
+}
+
+speedEl.addEventListener("input", () => {
+  state.speed = 10 ** parseFloat(speedEl.value);
+  updateSpeedLabel();
+});
+updateSpeedLabel();
+
+function updateSpotSizeLabel() {
+  spotSizeLabelEl.textContent = `${state.spotSigma.toFixed(2)} px`;
+}
+
+spotSizeEl.addEventListener("input", () => {
+  state.spotSigma = parseFloat(spotSizeEl.value);
+  updateSpotSizeLabel();
+});
+updateSpotSizeLabel();
+
+function updateBrightnessLabel() {
+  brightnessLabelEl.textContent = `${state.brightness.toFixed(2)}×`;
+}
+
+brightnessEl.addEventListener("input", () => {
+  state.brightness = 2 ** parseFloat(brightnessEl.value);
+  state.exposure = BASE_EXPOSURE * state.brightness;
+  updateBrightnessLabel();
+});
+updateBrightnessLabel();
+
+function togglePlay() {
+  state.playing = !state.playing;
+  playButton.textContent = state.playing ? "Pause" : "Play";
+}
+
+playButton.addEventListener("click", togglePlay);
+nowButton.addEventListener("click", () => {
+  state.jd = nowJD();
+});
+recenterButton.addEventListener("click", recenterCamera);
+
+window.addEventListener("keydown", (event) => {
+  if (event.code === "Space" && event.target === document.body) {
+    event.preventDefault();
+    togglePlay();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Render loop
+// ---------------------------------------------------------------------------
+
+let lastFrameTime = 0;
+let fpsFrames = 0;
+let fpsElapsed = 0;
+let fps = 0;
+let lastStatsUpdate = 0;
+
+function render(now) {
+  const dt = lastFrameTime ? Math.min((now - lastFrameTime) / 1000, 0.1) : 0;
+  lastFrameTime = now;
+
+  if (state.playing) {
+    state.jd += state.speed * dt;
+  }
+
+  resize();
+
+  const eye = [
+    cam.target[0] + cam.distance * Math.cos(cam.pitch) * Math.cos(cam.yaw),
+    cam.target[1] + cam.distance * Math.cos(cam.pitch) * Math.sin(cam.yaw),
+    cam.target[2] + cam.distance * Math.sin(cam.pitch)
+  ];
+
+  const view = lookAt(eye, cam.target, [0, 0, 1]);
+  const aspect = canvas.width / canvas.height;
+  const proj = perspective(CAMERA_FOV, aspect, 0.01, 30000.0);
+  const viewProj = multiply(proj, view);
+
+  gl.clearColor(0.0, 0.0, 0.0, 1.0);
+  gl.clear(gl.COLOR_BUFFER_BIT);
+  gl.disable(gl.DEPTH_TEST);
+  gl.enable(gl.BLEND);
+  gl.blendEquation(gl.FUNC_ADD);
+
+  // Asteroid cloud. Normal alpha blending keeps dense regions coloured
+  // instead of washing out to white as additive blending would.
+  if (asteroidVao && state.showAsteroids) {
+    gl.useProgram(asteroidProgram);
+    gl.uniformMatrix4fv(asteroidUniforms.viewProj, false, viewProj);
+    gl.uniform1f(asteroidUniforms.days, state.jd - epochJD);
+    gl.uniform1f(asteroidUniforms.dpr, dpr);
+    gl.uniform2f(asteroidUniforms.viewport, canvas.width, canvas.height);
+    gl.uniform1f(asteroidUniforms.spotSigma, state.spotSigma);
+    gl.uniform1f(asteroidUniforms.exposure, state.exposure);
+
+    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+    gl.bindVertexArray(asteroidVao);
+    gl.drawArrays(gl.POINTS, 0, asteroidCount);
+    gl.bindVertexArray(null);
+  }
+
+  // Planets on top, normal alpha blending.
+  if (state.showPlanets) {
+    updateBodies(state.jd);
+    gl.useProgram(planetProgram);
+    gl.uniformMatrix4fv(planetUniforms.viewProj, false, viewProj);
+    gl.uniform1f(planetUniforms.dpr, dpr);
+    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+    gl.bindVertexArray(planetVao);
+    gl.drawArrays(gl.POINTS, 0, 9);
+    gl.bindVertexArray(null);
+  }
+
+  dateEl.textContent = jdToDateString(state.jd);
+
+  fpsFrames++;
+  fpsElapsed += dt;
+  if (fpsElapsed >= 0.5) {
+    fps = fpsFrames / fpsElapsed;
+    fpsFrames = 0;
+    fpsElapsed = 0;
+    const nowMs = performance.now();
+    if (nowMs - lastStatsUpdate > 250) {
+      statsEl.textContent =
+        `${asteroidCount.toLocaleString()} points · ${fps.toFixed(0)} fps`;
+      lastStatsUpdate = nowMs;
+    }
+  }
+
+  requestAnimationFrame(render);
+}
+
+// Small debug handle, handy from the console.
+window.__astorb = {
+  state,
+  cam,
+  PLANETS,
+  planetPosition,
+  planetSizePx,
+  get epochJD() { return epochJD; }
+};
+
+// ---------------------------------------------------------------------------
+// Go
+// ---------------------------------------------------------------------------
+
+loadAsteroids()
+  .then(() => {
+    requestAnimationFrame(render);
+  })
+  .catch((err) => {
+    console.error(err);
+    subtitleEl.textContent = "failed to load";
+    fail(String(err.message || err));
+  });
+</script>
+</body>
+</html>
